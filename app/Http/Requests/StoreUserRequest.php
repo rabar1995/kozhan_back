@@ -18,7 +18,8 @@ class StoreUserRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:255'],
             'username' => ['required', 'string', 'max:255', 'unique:users,username'.($userId ? ",{$userId}" : '')],
-            'email' => ['required', 'email', 'max:255', 'unique:users,email'.($userId ? ",{$userId}" : '')],
+            // Phone number is the login identifier; username stays accepted as a fallback.
+            'phone' => ['required', 'string', 'max:50', 'unique:users,phone'.($userId ? ",{$userId}" : '')],
             'password' => [$userId ? 'nullable' : 'required', 'string', 'min:6'],
             'role' => ['required', 'in:owner,office_manager'],
             'is_active' => ['sometimes', 'boolean'],

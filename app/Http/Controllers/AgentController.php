@@ -10,6 +10,7 @@ use App\Models\JournalEntry;
 use App\Services\AgentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 class AgentController extends Controller
@@ -25,7 +26,7 @@ class AgentController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $agents = Agent::with(['balanceCurrency:id,code,symbol', 'receivableAccount:id,name,current_balance', 'payableAccount:id,name,current_balance'])
+        $agents = Agent::with(['currencyAccounts.receivableAccount:id,current_balance', 'currencyAccounts.payableAccount:id,current_balance', 'currencyAccounts.currency:id,code', 'balanceCurrency:id,code,symbol', 'receivableAccount:id,name,current_balance', 'payableAccount:id,name,current_balance'])
             ->when($request->filled('active'), fn ($q) => $q->where('is_active', true))
             ->orderBy('name')
             ->get();
@@ -52,9 +53,28 @@ class AgentController extends Controller
             ->where('office_id', $request->user()->office_id)
             ->findOrFail($id);
 
-        $agent->fill($request->validated())->save();
+        $data = $request->validated();
+        // currency_ids is not a column on agents — handled by updateCurrencies.
+        $fillData = collect($data)->except(['currency_ids'])->all();
 
-        return $this->ok($agent->load(['balanceCurrency', 'receivableAccount', 'payableAccount']), 'Agent updated.');
+        if (array_key_exists('currency_ids', $data) || array_key_exists('allow_all_currencies', $data)) {
+            DB::transaction(function () use ($agent, $data, $fillData) {
+                $agent->fill($fillData)->save();
+                $this->agents->updateCurrencies(
+                    $agent,
+                    $data['currency_ids'] ?? null,
+                    (bool) ($data['allow_all_currencies'] ?? false),
+                    $agent->office_id,
+                );
+            });
+        } else {
+            $agent->fill($fillData)->save();
+        }
+
+        return $this->ok(
+            $agent->load(['currencyAccounts.receivableAccount', 'currencyAccounts.payableAccount', 'currencyAccounts.currency', 'balanceCurrency', 'receivableAccount', 'payableAccount']),
+            'Agent updated.'
+        );
     }
 
     /**
@@ -62,7 +82,7 @@ class AgentController extends Controller
      */
     public function show(string $id): JsonResponse
     {
-        return $this->ok(Agent::with(['balanceCurrency', 'receivableAccount', 'payableAccount'])->findOrFail($id));
+        return $this->ok(Agent::with(['currencyAccounts.receivableAccount', 'currencyAccounts.payableAccount', 'currencyAccounts.currency', 'balanceCurrency', 'receivableAccount', 'payableAccount'])->findOrFail($id));
     }
 
     /**
@@ -81,6 +101,9 @@ class AgentController extends Controller
             'currency' => $agent->balanceCurrency?->code,
             'receivable_balance' => $agent->receivableAccount?->current_balance,
             'payable_balance' => $agent->payableAccount?->current_balance,
+            // Per-currency breakdown for multi-currency agents.
+            'allow_all_currencies' => $agent->allow_all_currencies,
+            'balances' => $agent->balances,
         ]);
     }
 

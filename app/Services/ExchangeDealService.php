@@ -18,17 +18,18 @@ class ExchangeDealService
     }
 
     /**
-     * Open a two-leg deal with a person, moving value out of (or into)
-     * one of the owner's private wallets.
+     * Book a two-sided deal from the single open card.
      *
-     * deal_send    DR pending (amount)  / CR wallet (amount)
-     *              => the person owes this amount.
-     * deal_receive DR wallet (amount)   / CR pending (amount)
-     *              => the office owes this amount.
+     * status = 'pending':
+     *   Send leg booked right away:
+     *      DR pending (send_amount) / CR send wallet (send_amount)
+     *   The planned receive side (wallet + amount) is stored on the row
+     *   WITHOUT booking — its booking happens when the deal is settled.
      *
-     * The money stays pending until settleDeal() closes the deal in
-     * another wallet — the numeric spread between the two legs is
-     * booked as profit/loss automatically.
+     * status = 'completed':
+     *   Both legs are booked atomically: send leg + settle leg, so the
+     *   receive wallet actually gets the receive amount and the FX
+     *   spread (receive_amount - send_amount) is booked as P/L.
      *
      * @param  array  $data  Validated request data
      * @param  User  $user  Acting user (owner only)
@@ -38,38 +39,49 @@ class ExchangeDealService
         return DB::transaction(function () use ($data, $user) {
             $officeId = $user->office_id;
 
-            $wallet = $this->findOwnWallet($data['account_id'], $officeId);
+            $wallet = $this->findOwnWallet($data['send_account_id'], $officeId);
             $pending = $this->findPendingAccount($officeId, $wallet->currency_id);
-            $amount = (float) $data['amount'];
+            $amount = (float) $data['send_amount'];
 
             $record = $this->createRecord([
                 'office_id' => $officeId,
                 'tx_number' => $this->nextNumber($officeId),
-                'direction' => $data['direction'],
-                'counterparty_name' => $data['counterparty_name'],
+                'direction' => 'deal_send',
+                'counterparty_name' => '—',
                 'account_id' => $wallet->id,
                 'amount' => $amount,
                 'currency_id' => $wallet->currency_id,
+                'settle_account_id' => $data['receive_account_id'] ?? null,
+                'settle_currency_id' => null,
+                'settle_amount' => $data['receive_amount'] ?? null,
                 'notes' => $data['notes'] ?? null,
                 'created_by' => $user->id,
             ]);
 
-            $isSend = $data['direction'] === 'deal_send';
-
             $this->book(
                 $officeId,
-                ($isSend ? 'Deal opened — sent to ' : 'Deal opened — received from ').$data['counterparty_name'],
+                'Deal opened — sent from '.$wallet->name.($data['status'] === 'completed' ? ' (done in same action)' : ''),
                 [
-                    $isSend
-                        ? $this->entry($pending->id, 'debit', $amount, $wallet->currency_id)
-                        : $this->entry($wallet->id, 'debit', $amount, $wallet->currency_id),
-                    $isSend
-                        ? $this->entry($wallet->id, 'credit', $amount, $wallet->currency_id)
-                        : $this->entry($pending->id, 'credit', $amount, $wallet->currency_id),
+                    $this->entry($pending->id, 'debit', $amount, $wallet->currency_id),
+                    $this->entry($wallet->id, 'credit', $amount, $wallet->currency_id),
                 ],
                 $user,
                 $record,
             );
+
+            // Completed deal: book the receive side in the same database
+            // transaction so the funds land in the receiving wallet at once.
+            if ($data['status'] === 'completed') {
+                $receiveWallet = $this->findOwnWallet($data['receive_account_id'], $officeId);
+                $record->settle_currency_id = $receiveWallet->currency_id;
+                $record->save();
+
+                $this->settleDeal($record->id, [
+                    'settle_account_id' => $receiveWallet->id,
+                    'settle_amount' => $data['receive_amount'],
+                    'notes' => $data['notes'] ?? null,
+                ], $user);
+            }
 
             return $record;
         });
@@ -230,6 +242,9 @@ class ExchangeDealService
                 'amount' => $t->amount,
                 'code' => $t->currency?->code,
                 'created_at' => $t->created_at,
+                // Planned receive side (saved when the deal was opened as pending)
+                'settle_account_id' => $t->settle_account_id,
+                'settle_amount' => $t->settle_amount,
             ]);
 
         return [

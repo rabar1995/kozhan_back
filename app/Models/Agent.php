@@ -14,7 +14,12 @@ class Agent extends Model
 
     protected $guarded = ['id'];
 
-    protected $appends = ['classification', 'logo_url'];
+    protected $appends = ['classification', 'logo_url', 'balances'];
+
+    public function currencyAccounts(): HasMany
+    {
+        return $this->hasMany(AgentCurrencyAccount::class);
+    }
 
     public function office(): BelongsTo
     {
@@ -82,6 +87,35 @@ class Agent extends Model
             'net_balance' => 'decimal:4',
             'commission_rate' => 'decimal:4',
             'is_active' => 'boolean',
+            'allow_all_currencies' => 'boolean',
         ];
+    }
+
+    /**
+     * Per-currency balances for multi-currency agents:
+     * [{currency, code, receivable, payable, net, classification}].
+     */
+    protected function balances(): Attribute
+    {
+        return Attribute::get(function () {
+            $rows = $this->relationLoaded('currencyAccounts')
+                ? $this->currencyAccounts
+                : $this->currencyAccounts()->get()->load(['receivableAccount', 'payableAccount', 'currency']);
+
+            return $rows->map(function (AgentCurrencyAccount $pair) {
+                $receivable = (float) ($pair->receivableAccount?->current_balance ?? 0);
+                $payable = (float) ($pair->payableAccount?->current_balance ?? 0);
+                $net = $receivable - $payable;
+
+                return [
+                    'currency_id' => $pair->currency_id,
+                    'currency' => $pair->currency?->code,
+                    'receivable' => $receivable,
+                    'payable' => $payable,
+                    'net' => $net,
+                    'classification' => $net > 0 ? 'debtor' : ($net < 0 ? 'creditor' : 'settled'),
+                ];
+            })->values();
+        });
     }
 }

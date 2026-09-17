@@ -13,7 +13,7 @@ use RuntimeException;
 
 class RemittanceService
 {
-    public function __construct(private AccountingService $accounting)
+    public function __construct(private AccountingService $accounting, private AgentService $agents)
     {
     }
 
@@ -69,7 +69,7 @@ class RemittanceService
                 'reference_id' => $remittance->id,
                 'entries' => [
                     [
-                        'account_id' => $agent->receivable_account_id,
+                        'account_id' => $this->agents->resolveAgentAccounts($agent, $data['send_currency_id'])->receivable_account_id,
                         'entry_type' => 'debit',
                         'amount' => $data['send_amount'],
                         'currency_id' => $data['send_currency_id'],
@@ -148,7 +148,7 @@ class RemittanceService
                     'currency_id' => $data['receive_currency_id'],
                 ],
                 [
-                    'account_id' => $agent->payable_account_id,
+                    'account_id' => $this->agents->resolveAgentAccounts($agent, $data['send_currency_id'])->payable_account_id,
                     'entry_type' => 'credit',
                     'amount' => $data['send_amount'],
                     'currency_id' => $data['send_currency_id'],
@@ -338,7 +338,7 @@ class RemittanceService
                     'currency_id' => $currencyId,
                 ],
                 [
-                    'account_id' => $agent->payable_account_id,
+                    'account_id' => $this->agents->resolveAgentAccounts($agent, $currencyId)->payable_account_id,
                     'entry_type' => 'credit',
                     'amount' => $amount,
                     'currency_id' => $currencyId,
@@ -347,7 +347,7 @@ class RemittanceService
         } else {
             $entries = [
                 [
-                    'account_id' => $agent->receivable_account_id,
+                    'account_id' => $this->agents->resolveAgentAccounts($agent, $currencyId)->receivable_account_id,
                     'entry_type' => 'debit',
                     'amount' => $amount,
                     'currency_id' => $currencyId,

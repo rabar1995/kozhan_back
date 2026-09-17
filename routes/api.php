@@ -13,6 +13,7 @@ use App\Http\Controllers\ExpenseController;
 use App\Http\Controllers\RemittanceController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\TransferController;
+use App\Http\Controllers\UploadController;
 use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -33,6 +34,7 @@ Route::middleware(['auth:sanctum', 'audit'])->group(function () {
     Route::get('/accounts/{id}/ledger', [AccountController::class, 'ledger']);
 
     Route::get('/agents', [AgentController::class, 'index']);
+    Route::post('/uploads/logo', [UploadController::class, 'store']);
     Route::post('/agents', [AgentController::class, 'store']);
     Route::patch('/agents/{id}', [AgentController::class, 'update']);
     Route::get('/agents/{id}/balance', [AgentController::class, 'balance']);

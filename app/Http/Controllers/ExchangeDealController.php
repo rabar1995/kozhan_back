@@ -80,19 +80,26 @@ class ExchangeDealController extends Controller
     }
 
     /**
-     * Open a deal with a person: the owner sent money out of one of his
-     * wallets (deal_send) or a person delivered money into one (deal_receive);
-     * it stays pending until it is settled.
+     * Book a two-sided deal in one card:
+     *  - send side:  wallet + amount the money leaves
+     *  - receive side: wallet + amount the money arrives in
+     *  - status:  "completed" (done now: both legs booked atomically)
+     *             or "pending" (send leg booked, receive side saved as plan)
      */
     public function openDeal(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'direction' => ['required', 'in:deal_send,deal_receive'],
-            'counterparty_name' => ['required', 'string', 'max:255'],
-            'account_id' => ['required', 'uuid', 'exists:accounts,id'],
-            'amount' => ['required', 'numeric', 'min:0.01'],
+            'send_account_id' => ['required', 'uuid', 'exists:accounts,id'],
+            'send_amount' => ['required', 'numeric', 'min:0.01'],
+            'receive_account_id' => ['nullable', 'uuid', 'exists:accounts,id'],
+            'receive_amount' => ['nullable', 'numeric', 'min:0.01'],
+            'status' => ['required', 'in:pending,completed'],
             'notes' => ['nullable', 'string'],
         ]);
+
+        if ($data['status'] === 'completed' && (empty($data['receive_account_id']) || empty($data['receive_amount']))) {
+            return $this->fail('A completed deal needs the receiving wallet and amount.', 422);
+        }
 
         try {
             $record = $this->deals->openDeal($data, $request->user());

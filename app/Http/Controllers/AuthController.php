@@ -13,17 +13,18 @@ class AuthController extends Controller
     use ApiResponse;
 
     /**
-     * Authenticate with email/username + password and issue a Sanctum token.
+     * Authenticate with phone number (or username fallback) + password
+     * and issue a Sanctum token.
      */
     public function login(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'email' => ['required', 'string'],
+            'phone' => ['required', 'string'],
             'password' => ['required', 'string'],
         ]);
 
-        $user = User::where('email', $data['email'])
-            ->orWhere('username', $data['email'])
+        $user = User::where('phone', $data['phone'])
+            ->orWhere('username', $data['phone'])
             ->first();
 
         if (! $user || ! Hash::check($data['password'], $user->password)) {
