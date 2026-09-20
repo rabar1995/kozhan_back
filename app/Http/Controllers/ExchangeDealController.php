@@ -65,7 +65,10 @@ class ExchangeDealController extends Controller
                 'account:id,name',
                 'settleAccount:id,name',
                 'dealParent:id,tx_number,counterparty_name',
-                'dealSettlements:id,tx_number,deal_parent_id,status',
+                'dealSettlements:id,deal_parent_id,tx_number,settle_amount,settle_currency_id,settle_account_id,created_at' => [
+                    'settleCurrency:id,code,symbol',
+                    'settleAccount:id,name',
+                ],
                 'creator:id,name',
             ])
             ->where('office_id', $officeId)

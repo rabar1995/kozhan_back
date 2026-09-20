@@ -57,6 +57,9 @@ Route::middleware(['auth:sanctum', 'audit'])->group(function () {
     Route::middleware('role:owner')->group(function () {
         Route::post('/accounts', [AccountController::class, 'store']);
         Route::put('/accounts/{id}', [AccountController::class, 'update']);
+        Route::patch('/accounts/{id}/deactivate', [AccountController::class, 'deactivate']);
+        Route::patch('/accounts/{id}/activate', [AccountController::class, 'activate']);
+        Route::delete('/accounts/{id}', [AccountController::class, 'destroy']);
 
         Route::patch('/remittances/{id}/cancel', [RemittanceController::class, 'cancel']);
 

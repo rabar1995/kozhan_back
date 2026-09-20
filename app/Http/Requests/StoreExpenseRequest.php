@@ -16,7 +16,7 @@ class StoreExpenseRequest extends FormRequest
         return [
             'expense_category_id' => ['required', 'uuid', 'exists:expense_categories,id'],
             'paid_from_account_id' => ['required', 'uuid', 'exists:accounts,id'],
-            'expense_account_id' => ['required', 'uuid', 'exists:accounts,id'],
+            'expense_account_id' => ['nullable', 'uuid', 'exists:accounts,id'],
             'amount' => ['required', 'numeric', 'min:0.01'],
             'currency_id' => ['required', 'uuid', 'exists:currencies,id'],
             'description' => ['required', 'string'],

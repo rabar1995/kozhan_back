@@ -6,6 +6,7 @@ use App\Http\Concerns\ApiResponse;
 use App\Models\Account;
 use App\Models\AccountType;
 use App\Models\JournalEntry;
+use App\Models\Transaction;
 use App\Services\AccountingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -132,6 +133,9 @@ class AccountController extends Controller
      * Update an account/wallet (owner only).
      * Name, type and currency are editable; changing the currency is
      * blocked while the balance is not zero.
+     * An optional new_balance posts a balanced "Balance adjustment"
+     * transaction (against Owner's Equity) so the double-entry system
+     * stays intact.
      */
     public function update(string $id, Request $request): JsonResponse
     {
@@ -146,6 +150,7 @@ class AccountController extends Controller
             'is_active' => ['sometimes', 'boolean'],
             'logo_url' => ['nullable', 'url', 'max:255'],
         ]);
+        $balance = $request->validate(['new_balance' => ['nullable', 'numeric', 'min:0']])['new_balance'] ?? null;
 
         if (array_key_exists('currency_id', $data)
             && $data['currency_id'] !== $account->currency_id
@@ -153,9 +158,48 @@ class AccountController extends Controller
             return $this->fail('The currency cannot be changed while the wallet balance is not zero.', 422);
         }
 
-        $account->fill($data)->save();
+        $targetBalance = $balance === null ? null : round((float) $balance, 4);
+        $currentBalance = round((float) $account->current_balance, 4);
+        $delta = round($targetBalance - $currentBalance, 4);
 
-        return $this->ok($account->load(['accountType', 'currency']), 'Account updated.');
+        $account = DB::transaction(function () use ($account, $data, $delta, $request) {
+            $account->fill($data)->save();
+
+            if ($delta !== 0.0 && abs($delta) >= 0.0001) {
+                $equity = $this->ensureOwnerEquityAccount($request->user()->office_id, $account->currency_id);
+                $creditSide = $delta > 0 ? $equity : $account;
+                $debitSide = $delta > 0 ? $account : $equity;
+
+                app(AccountingService::class)->createTransaction([
+                    'office_id' => $request->user()->office_id,
+                    'tx_type' => 'adjustment',
+                    'description' => 'Balance adjustment for '.$account->name,
+                    'created_by' => $request->user()->id,
+                    'reference_type' => 'account',
+                    'reference_id' => $account->id,
+                    'entries' => [
+                        [
+                            'account_id' => $debitSide->id,
+                            'entry_type' => 'debit',
+                            'amount' => abs($delta),
+                            'currency_id' => $account->currency_id,
+                            'description' => 'Balance adjustment',
+                        ],
+                        [
+                            'account_id' => $creditSide->id,
+                            'entry_type' => 'credit',
+                            'amount' => abs($delta),
+                            'currency_id' => $account->currency_id,
+                            'description' => 'Balance adjustment (owner equity)',
+                        ],
+                    ],
+                ]);
+            }
+
+            return $account->fresh(['accountType', 'currency']);
+        });
+
+        return $this->ok($account, 'Account updated.');
     }
 
     /**
@@ -164,6 +208,106 @@ class AccountController extends Controller
     public function show(string $id): JsonResponse
     {
         return $this->ok(Account::with(['accountType', 'currency'])->findOrFail($id));
+    }
+
+    /**
+     * Deactivate an account/wallet (owner only).
+     * Blocked while the balance is not zero so the ledger stays consistent.
+     */
+    public function deactivate(string $id, Request $request): JsonResponse
+    {
+        $account = Account::withoutGlobalScopes()->where('office_id', $request->user()->office_id)->findOrFail($id);
+
+        if (round(abs((float) $account->current_balance), 4) > 0) {
+            return $this->fail('The wallet cannot be deactivated while its balance is not zero.', 422);
+        }
+
+        $account->forceFill(['is_active' => false])->save();
+
+        return $this->ok($account->load(['accountType', 'currency']), 'Account deactivated.');
+    }
+
+    /**
+     * Re-activate a previously deactivated account/wallet (owner only).
+     */
+    public function activate(string $id, Request $request): JsonResponse
+    {
+        $account = Account::withoutGlobalScopes()->where('office_id', $request->user()->office_id)->findOrFail($id);
+
+        $account->forceFill(['is_active' => true])->save();
+
+        return $this->ok($account->load(['accountType', 'currency']), 'Account activated.');
+    }
+
+    /**
+     * Permanently delete an account/wallet (owner only).
+     * Only allowed when the balance is zero. Journal entries referencing
+     * the wallet (deals, transfers, expenses, remittances, adjustments)
+     * normally block deletion; passing ?force=true erases the wallet's
+     * ledger records together with the wallet itself.
+     */
+    public function destroy(string $id, Request $request): JsonResponse
+    {
+        $account = Account::withoutGlobalScopes()->where('office_id', $request->user()->office_id)->findOrFail($id);
+
+        if (round(abs((float) $account->current_balance), 4) > 0) {
+            return $this->fail('The wallet cannot be deleted while its balance is not zero. Deactivate it instead.', 422);
+        }
+
+        $txIds = Transaction::whereHas('journalEntries', fn ($q) => $q->where('account_id', $account->id))->pluck('id');
+
+        if ($txIds->isNotEmpty() && ! $request->boolean('force')) {
+            return $this->fail('The wallet cannot be deleted because it has ledger history. Deactivate it instead.', 422);
+        }
+
+        DB::transaction(function () use ($account, $txIds) {
+            if ($txIds->isNotEmpty()) {
+                // Open a transaction-local maintenance window so the
+                // immutability trigger allows this controlled cleanup.
+                DB::statement("SELECT set_config('app.journal_maintenance', 'on', true)");
+
+                // Accounts that will lose entries — captured before delete.
+                $affectedIds = array_values(
+                    JournalEntry::whereIn('transaction_id', $txIds)
+                        ->distinct()
+                        ->pluck('account_id')
+                        ->all()
+                );
+
+                JournalEntry::whereIn('transaction_id', $txIds)->delete();
+                Transaction::whereIn('id', $txIds)->delete();
+
+                // The balance trigger only fires on INSERT (never on
+                // DELETE), so mirror its math here for every account
+                // whose entries were just removed.
+                if ($affectedIds) {
+                    $accountPlaceholders = implode(',', array_fill(0, count($affectedIds), '?'));
+
+                    DB::statement(<<<SQL
+                        UPDATE accounts a
+                        SET current_balance = COALESCE(v.bal, 0), updated_at = NOW()
+                        FROM (
+                            SELECT je.account_id,
+                                   SUM(CASE
+                                       WHEN at.normal_balance = 'debit'
+                                           THEN CASE WHEN je.entry_type = 'debit' THEN je.amount ELSE -je.amount END
+                                       ELSE CASE WHEN je.entry_type = 'credit' THEN je.amount ELSE -je.amount END
+                                   END) AS bal
+                            FROM journal_entries je
+                            JOIN accounts ac ON ac.id = je.account_id
+                            JOIN account_types at ON at.id = ac.account_type_id
+                            WHERE je.account_id IN ({$accountPlaceholders})
+                            GROUP BY je.account_id
+                        ) v
+                        WHERE a.id = v.account_id
+                    SQL, $affectedIds);
+                }
+            }
+
+            $account->delete();
+        });
+
+        return $this->ok(null, 'Account deleted.');
     }
 
     /**
