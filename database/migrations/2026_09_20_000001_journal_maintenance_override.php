@@ -17,6 +17,14 @@ return new class extends Migration
 {
     public function up(): void
     {
+        $current = DB::selectOne(
+            'SELECT pg_get_functiondef(\'public.fn_prevent_journal_modify()\'::regprocedure) AS def'
+        )?->def ?? '';
+
+        if (str_contains($current, 'journal_maintenance')) {
+            return; // already applied (e.g. by the DB admin directly)
+        }
+
         DB::unprepared(<<<'SQL'
             CREATE OR REPLACE FUNCTION public.fn_prevent_journal_modify() RETURNS trigger
                 LANGUAGE plpgsql
