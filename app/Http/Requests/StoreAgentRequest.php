@@ -24,7 +24,6 @@ class StoreAgentRequest extends FormRequest
             'currency_ids' => ['nullable', 'array'],
             'currency_ids.*' => ['uuid', 'exists:currencies,id'],
             'allow_all_currencies' => ['nullable', 'boolean'],
-            'commission_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'logo_url' => ['nullable', 'url', 'max:255'],
         ];
     }

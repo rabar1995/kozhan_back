@@ -35,7 +35,7 @@ class ExpenseService
             if (! empty($data['expense_account_id'])) {
                 $expenseAccount = \App\Models\Account::withoutGlobalScopes()->findOrFail($data['expense_account_id']);
             } else {
-                $expenseAccount = $this->ensureExpenseAccount($user->office_id, $data['currency_id']);
+                $expenseAccount = $this->accounting->findOrCreateOfficeAccount($user->office_id, 'operating_expense', $data['currency_id']);
             }
 
             if ($paidFrom->currency_id !== $data['currency_id'] || $expenseAccount->currency_id !== $data['currency_id']) {
@@ -83,36 +83,5 @@ class ExpenseService
 
             return $expense;
         });
-    }
-
-    /**
-     * Find or lazily create the office's Operating Expenses account for
-     * the given currency (same pattern as the system's other lazy system
-     * wallets, e.g. Owner's Equity).
-     */
-    private function ensureExpenseAccount(string $officeId, string $currencyId): \App\Models\Account
-    {
-        $account = \App\Models\Account::withoutGlobalScopes()
-            ->where('office_id', $officeId)
-            ->where('currency_id', $currencyId)
-            ->whereHas('accountType', fn ($q) => $q->where('code', 'operating_expense'))
-            ->first();
-
-        if ($account) {
-            return $account;
-        }
-
-        $type = \App\Models\AccountType::where('code', 'operating_expense')->firstOrFail();
-        $code = \App\Models\Currency::where('id', $currencyId)->value('code') ?: 'CUR';
-
-        return \App\Models\Account::create([
-            'office_id' => $officeId,
-            'account_type_id' => $type->id,
-            'currency_id' => $currencyId,
-            'name' => "Operating Expenses - {$code}",
-            'visibility' => 'office_shared',
-            'current_balance' => 0,
-            'is_active' => true,
-        ]);
     }
 }

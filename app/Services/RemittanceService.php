@@ -3,9 +3,7 @@
 namespace App\Services;
 
 use App\Models\Account;
-use App\Models\AccountType;
 use App\Models\Agent;
-use App\Models\Currency;
 use App\Models\Remittance;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -23,8 +21,8 @@ class RemittanceService
      * Booking entries: DR agent.receivable_account (send_amount)
      *                  CR remittance_payable (send_amount).
      * When commission > 0 a separate commission transaction is created:
-     * earned  => DR agent.receivable_account, CR commission_revenue
-     * paid    => DR commission_expense,       CR agent.payable_account.
+     * earned  => DR agent.receivable_account, CR commission
+     * paid    => DR commission,               CR agent.payable_account.
      *
      * @param  array  $data  Validated request data (agent_id, amounts, currencies, commission...)
      * @param  User  $user  Acting user (office is taken from the user)
@@ -50,7 +48,6 @@ class RemittanceService
                 'send_currency_id' => $data['send_currency_id'],
                 'receive_amount' => $data['receive_amount'],
                 'receive_currency_id' => $data['receive_currency_id'],
-                'exchange_rate' => $data['exchange_rate'],
                 'commission_amount' => $data['commission_amount'] ?? 0,
                 'commission_currency_id' => $data['commission_currency_id'] ?? null,
                 'commission_type' => $data['commission_type'] ?? null,
@@ -58,7 +55,7 @@ class RemittanceService
                 'created_by' => $user->id,
             ]);
 
-            $payableAccount = $this->findOfficeAccountByType($officeId, 'remittance_payable', $data['send_currency_id']);
+            $payableAccount = $this->accounting->findOrCreateOfficeAccount($officeId, 'remittance_payable', $data['send_currency_id']);
 
             $booking = $this->accounting->createTransaction([
                 'office_id' => $officeId,
@@ -69,7 +66,7 @@ class RemittanceService
                 'reference_id' => $remittance->id,
                 'entries' => [
                     [
-                        'account_id' => $this->agents->resolveAgentAccounts($agent, $data['send_currency_id'])->receivable_account_id,
+                        'account_id' => $this->agents->resolveAgentAccounts($agent, $data['send_currency_id'])->account_id,
                         'entry_type' => 'debit',
                         'amount' => $data['send_amount'],
                         'currency_id' => $data['send_currency_id'],
@@ -131,7 +128,6 @@ class RemittanceService
                 'send_currency_id' => $data['send_currency_id'],
                 'receive_amount' => $data['receive_amount'],
                 'receive_currency_id' => $data['receive_currency_id'],
-                'exchange_rate' => $data['exchange_rate'],
                 'commission_amount' => $data['commission_amount'] ?? 0,
                 'commission_currency_id' => $data['commission_currency_id'] ?? null,
                 'commission_type' => $data['commission_type'] ?? null,
@@ -148,7 +144,7 @@ class RemittanceService
                     'currency_id' => $data['receive_currency_id'],
                 ],
                 [
-                    'account_id' => $this->agents->resolveAgentAccounts($agent, $data['send_currency_id'])->payable_account_id,
+                    'account_id' => $this->agents->resolveAgentAccounts($agent, $data['send_currency_id'])->account_id,
                     'entry_type' => 'credit',
                     'amount' => $data['send_amount'],
                     'currency_id' => $data['send_currency_id'],
@@ -160,13 +156,13 @@ class RemittanceService
             if (abs($spread) > 0.0001) {
                 $spreadEntry = $spread > 0
                     ? [
-                        'account_id' => $this->findOfficeAccountByType($officeId, 'commission_revenue', $data['receive_currency_id'])->id,
+                        'account_id' => $this->accounting->findOrCreateOfficeAccount($officeId, 'commission', $data['receive_currency_id'])->id,
                         'entry_type' => 'credit',
                         'amount' => abs($spread),
                         'currency_id' => $data['receive_currency_id'],
                     ]
                     : [
-                        'account_id' => $this->findOfficeAccountByType($officeId, 'commission_expense', $data['receive_currency_id'])->id,
+                        'account_id' => $this->accounting->findOrCreateOfficeAccount($officeId, 'commission', $data['receive_currency_id'])->id,
                         'entry_type' => 'debit',
                         'amount' => abs($spread),
                         'currency_id' => $data['receive_currency_id'],
@@ -222,7 +218,7 @@ class RemittanceService
                 $officeId = $user->office_id;
                 $agent = $remittance->agent;
 
-                $payableAccount = $this->findOfficeAccountByType($officeId, 'remittance_payable', $remittance->send_currency_id);
+                $payableAccount = $this->accounting->findOrCreateOfficeAccount($officeId, 'remittance_payable', $remittance->send_currency_id);
 
                 $entries = [
                     [
@@ -244,13 +240,13 @@ class RemittanceService
                 if (abs($spread) > 0.0001) {
                     $entries[] = $spread > 0
                         ? [
-                            'account_id' => $this->findOfficeAccountByType($officeId, 'commission_revenue', $remittance->receive_currency_id)->id,
+                            'account_id' => $this->accounting->findOrCreateOfficeAccount($officeId, 'commission', $remittance->receive_currency_id)->id,
                             'entry_type' => 'credit',
                             'amount' => $spread,
                             'currency_id' => $remittance->receive_currency_id,
                         ]
                         : [
-                            'account_id' => $this->findOfficeAccountByType($officeId, 'commission_expense', $remittance->receive_currency_id)->id,
+                            'account_id' => $this->accounting->findOrCreateOfficeAccount($officeId, 'commission', $remittance->receive_currency_id)->id,
                             'entry_type' => 'debit',
                             'amount' => abs($spread),
                             'currency_id' => $remittance->receive_currency_id,
@@ -321,8 +317,8 @@ class RemittanceService
 
     /**
      * Create the commission transaction for an incoming remittance.
-     * earned => DR agent.receivable, CR commission_revenue
-     * paid   => DR commission_expense, CR agent.payable.
+     * earned => DR agent.receivable, CR commission
+     * paid   => DR commission, CR agent.payable.
      */
     private function createCommissionTransaction(Remittance $remittance, Agent $agent, string $officeId, User $user)
     {
@@ -332,13 +328,13 @@ class RemittanceService
         if ($remittance->commission_type === 'paid') {
             $entries = [
                 [
-                    'account_id' => $this->findOfficeAccountByType($officeId, 'commission_expense', $currencyId)->id,
+                    'account_id' => $this->accounting->findOrCreateOfficeAccount($officeId, 'commission', $currencyId)->id,
                     'entry_type' => 'debit',
                     'amount' => $amount,
                     'currency_id' => $currencyId,
                 ],
                 [
-                    'account_id' => $this->agents->resolveAgentAccounts($agent, $currencyId)->payable_account_id,
+                    'account_id' => $this->agents->resolveAgentAccounts($agent, $currencyId)->account_id,
                     'entry_type' => 'credit',
                     'amount' => $amount,
                     'currency_id' => $currencyId,
@@ -347,13 +343,13 @@ class RemittanceService
         } else {
             $entries = [
                 [
-                    'account_id' => $this->agents->resolveAgentAccounts($agent, $currencyId)->receivable_account_id,
+                    'account_id' => $this->agents->resolveAgentAccounts($agent, $currencyId)->account_id,
                     'entry_type' => 'debit',
                     'amount' => $amount,
                     'currency_id' => $currencyId,
                 ],
                 [
-                    'account_id' => $this->findOfficeAccountByType($officeId, 'commission_revenue', $currencyId)->id,
+                    'account_id' => $this->accounting->findOrCreateOfficeAccount($officeId, 'commission', $currencyId)->id,
                     'entry_type' => 'credit',
                     'amount' => $amount,
                     'currency_id' => $currencyId,
@@ -378,35 +374,5 @@ class RemittanceService
     private function nextNumber(string $officeId, string $type): string
     {
         return DB::select('SELECT fn_next_sequence(?, ?) AS number', [$officeId, $type])[0]->number;
-    }
-
-    /**
-     * Find an office account by its account type code and currency,
-     * creating it (office_shared) when it does not exist yet.
-     */
-    private function findOfficeAccountByType(string $officeId, string $typeCode, string $currencyId): Account
-    {
-        $account = Account::withoutGlobalScopes()
-            ->where('office_id', $officeId)
-            ->where('currency_id', $currencyId)
-            ->whereHas('accountType', fn ($q) => $q->where('code', $typeCode))
-            ->first();
-
-        if ($account) {
-            return $account;
-        }
-
-        $type = AccountType::where('code', $typeCode)->firstOrFail();
-        $currencyCode = Currency::findOrFail($currencyId)->code;
-
-        return Account::create([
-            'office_id' => $officeId,
-            'account_type_id' => $type->id,
-            'currency_id' => $currencyId,
-            'name' => $type->name.' - '.$currencyCode,
-            'visibility' => 'office_shared',
-            'current_balance' => 0,
-            'is_active' => true,
-        ]);
     }
 }

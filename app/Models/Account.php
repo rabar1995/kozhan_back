@@ -53,6 +53,17 @@ class Account extends Model
         });
     }
 
+    /**
+     * System account types (e.g. Owner's Equity, exchange pending) are
+     * internal ledger accounts and must not be listed in the UI.
+     */
+    public function scopeWithoutSystemTypes(Builder $query): Builder
+    {
+        return $query->whereHas('accountType', function (Builder $q) {
+            $q->whereNotIn('code', ['owner_equity', 'exchange_pending']);
+        });
+    }
+
     public function scopeByCurrency(Builder $query, string $currencyId): Builder
     {
         return $query->where('currency_id', $currencyId);
@@ -74,7 +85,6 @@ class Account extends Model
     {
         return [
             'current_balance' => 'decimal:4',
-            'metadata' => 'array',
             'is_active' => 'boolean',
         ];
     }

@@ -22,6 +22,11 @@ class AgentCurrencyAccount extends Model
         return $this->belongsTo(Currency::class);
     }
 
+    public function account(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Account::class, 'account_id');
+    }
+
     public function receivableAccount(): BelongsTo
     {
         return $this->belongsTo(Account::class, 'receivable_account_id');

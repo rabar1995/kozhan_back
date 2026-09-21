@@ -85,33 +85,37 @@ class Agent extends Model
     {
         return [
             'net_balance' => 'decimal:4',
-            'commission_rate' => 'decimal:4',
             'is_active' => 'boolean',
             'allow_all_currencies' => 'boolean',
         ];
     }
 
     /**
-     * Per-currency balances for multi-currency agents:
-     * [{currency, code, receivable, payable, net, classification}].
+     * Per-currency net balances for multi-currency agents:
+     * [{currency, code, net, classification}] — a single signed amount
+     * per currency (positive = agent owes office, negative = office
+     * owes agent). Works for legacy receivable/payable pairs and the
+     * new single agent_wallet accounts.
      */
     protected function balances(): Attribute
     {
         return Attribute::get(function () {
             $rows = $this->relationLoaded('currencyAccounts')
                 ? $this->currencyAccounts
-                : $this->currencyAccounts()->get()->load(['receivableAccount', 'payableAccount', 'currency']);
+                : $this->currencyAccounts()->with(['account:id,current_balance', 'receivableAccount:id,current_balance', 'payableAccount:id,current_balance', 'currency'])->get();
 
             return $rows->map(function (AgentCurrencyAccount $pair) {
-                $receivable = (float) ($pair->receivableAccount?->current_balance ?? 0);
-                $payable = (float) ($pair->payableAccount?->current_balance ?? 0);
-                $net = $receivable - $payable;
+                if ($pair->account) {
+                    $net = (float) ($pair->account->current_balance ?? 0);
+                } else {
+                    $receivable = (float) ($pair->receivableAccount?->current_balance ?? 0);
+                    $payable = (float) ($pair->payableAccount?->current_balance ?? 0);
+                    $net = $receivable - $payable;
+                }
 
                 return [
                     'currency_id' => $pair->currency_id,
                     'currency' => $pair->currency?->code,
-                    'receivable' => $receivable,
-                    'payable' => $payable,
                     'net' => $net,
                     'classification' => $net > 0 ? 'debtor' : ($net < 0 ? 'creditor' : 'settled'),
                 ];

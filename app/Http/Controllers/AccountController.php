@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Http\Concerns\ApiResponse;
 use App\Models\Account;
-use App\Models\AccountType;
 use App\Models\JournalEntry;
 use App\Models\Transaction;
 use App\Services\AccountingService;
@@ -23,6 +22,7 @@ class AccountController extends Controller
     public function index(Request $request): JsonResponse
     {
         $accounts = Account::with(['accountType', 'currency'])
+            ->withoutSystemTypes()
             ->when($request->filled('type'), fn ($q) => $q->byType($request->string('type')))
             ->when($request->filled('currency_id'), fn ($q) => $q->byCurrency($request->string('currency_id')))
             ->when($request->filled('active'), fn ($q) => $q->active())
@@ -35,8 +35,8 @@ class AccountController extends Controller
     /**
      * Create a new wallet/account (owner only).
      * An optional opening_balance posts a balanced "opening balance"
-     * transaction (debit the new account, credit the office's Owner's
-     * Equity account) so the double-entry system stays intact.
+     * transaction (debit the new account, credit the office's
+     * Owner's Equity account) so the double-entry system stays intact.
      */
     public function store(Request $request): JsonResponse
     {
@@ -45,7 +45,6 @@ class AccountController extends Controller
             'currency_id' => ['required', 'uuid', 'exists:currencies,id'],
             'name' => ['required', 'string', 'max:255'],
             'visibility' => ['required', 'in:owner_private,office_shared'],
-            'metadata' => ['nullable', 'array'],
             'is_active' => ['sometimes', 'boolean'],
             'logo_url' => ['nullable', 'url', 'max:255'],
             'opening_balance' => ['nullable', 'numeric', 'min:0'],
@@ -64,7 +63,12 @@ class AccountController extends Controller
             ]);
 
             if ($openingBalance > 0) {
-                $equity = $this->ensureOwnerEquityAccount($user->office_id, $data['currency_id']);
+                $equity = app(AccountingService::class)->findOrCreateOfficeAccount(
+                    $user->office_id,
+                    'owner_equity',
+                    $data['currency_id'],
+                    'owner_private'
+                );
 
                 app(AccountingService::class)->createTransaction([
                     'office_id' => $user->office_id,
@@ -101,35 +105,6 @@ class AccountController extends Controller
     }
 
     /**
-     * Find or lazily create the Owner's Equity account for the office
-     * and currency used by opening-balance transactions.
-     */
-    private function ensureOwnerEquityAccount(string $officeId, string $currencyId): Account
-    {
-        $equity = Account::withoutGlobalScopes()
-            ->where('office_id', $officeId)
-            ->where('currency_id', $currencyId)
-            ->where('visibility', 'owner_private')
-            ->whereHas('accountType', fn ($q) => $q->where('code', 'owner_equity'))
-            ->first();
-
-        if ($equity) {
-            return $equity;
-        }
-
-        $type = AccountType::where('code', 'owner_equity')->firstOrFail();
-
-        return Account::create([
-            'office_id' => $officeId,
-            'account_type_id' => $type->id,
-            'currency_id' => $currencyId,
-            'name' => "Owner's Equity",
-            'visibility' => 'owner_private',
-            'current_balance' => 0,
-        ]);
-    }
-
-    /**
      * Update an account/wallet (owner only).
      * Name, type and currency are editable; changing the currency is
      * blocked while the balance is not zero.
@@ -146,11 +121,28 @@ class AccountController extends Controller
             'account_type_id' => ['sometimes', 'uuid', 'exists:account_types,id'],
             'currency_id' => ['sometimes', 'uuid', 'exists:currencies,id'],
             'visibility' => ['sometimes', 'in:owner_private,office_shared'],
-            'metadata' => ['nullable', 'array'],
             'is_active' => ['sometimes', 'boolean'],
             'logo_url' => ['nullable', 'url', 'max:255'],
         ]);
         $balance = $request->validate(['new_balance' => ['nullable', 'numeric', 'min:0']])['new_balance'] ?? null;
+
+        /**
+         * Account types whose balances are ledger-managed only. Manual
+         * balance edits are blocked: agent balances move solely through
+         * remittances, payouts and settlements.
+         */
+        $lockedTypeCodes = ['agent_wallet', 'exchange_pending', 'owner_equity'];
+        $account->loadMissing('accountType');
+        $isLockedType = in_array($account->accountType?->code, $lockedTypeCodes, true);
+
+        if ($isLockedType && $balance !== null
+            && round(abs($balance - round((float) $account->current_balance, 4)), 4) > 0.0001) {
+            return $this->fail(
+                'The balance of this wallet cannot be changed manually. '
+                .'Agent balances only move through remittances, payouts and settlements.',
+                422
+            );
+        }
 
         if (array_key_exists('currency_id', $data)
             && $data['currency_id'] !== $account->currency_id
@@ -166,7 +158,12 @@ class AccountController extends Controller
             $account->fill($data)->save();
 
             if ($delta !== 0.0 && abs($delta) >= 0.0001) {
-                $equity = $this->ensureOwnerEquityAccount($request->user()->office_id, $account->currency_id);
+                $equity = app(AccountingService::class)->findOrCreateOfficeAccount(
+                    $request->user()->office_id,
+                    'owner_equity',
+                    $account->currency_id,
+                    'owner_private'
+                );
                 $creditSide = $delta > 0 ? $equity : $account;
                 $debitSide = $delta > 0 ? $account : $equity;
 
@@ -200,14 +197,6 @@ class AccountController extends Controller
         });
 
         return $this->ok($account, 'Account updated.');
-    }
-
-    /**
-     * Show one account with its current balance.
-     */
-    public function show(string $id): JsonResponse
-    {
-        return $this->ok(Account::with(['accountType', 'currency'])->findOrFail($id));
     }
 
     /**
@@ -333,6 +322,7 @@ class AccountController extends Controller
     public function balances(Request $request): JsonResponse
     {
         $accounts = Account::with(['accountType:id,code,name,category,normal_balance', 'currency:id,code,symbol'])
+            ->withoutSystemTypes()
             ->active()
             ->orderBy('name')
             ->get()

@@ -31,6 +31,7 @@ class ExchangeDealController extends Controller
                 ->where('office_id', $officeId)
                 ->where('visibility', 'owner_private')
                 ->where('is_active', true)
+                ->withoutSystemTypes()
                 ->orderBy('name')
                 ->get(['id', 'name', 'currency_id', 'logo_url'])
                 ->map(fn (Account $a) => [

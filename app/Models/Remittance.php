@@ -75,37 +75,11 @@ class Remittance extends Model
         return $this->belongsTo(Account::class, 'payment_account_id');
     }
 
-    public function scopePending(Builder $query): Builder
-    {
-        return $query->where('status', 'pending');
-    }
-
-    public function scopeCompleted(Builder $query): Builder
-    {
-        return $query->where('status', 'completed');
-    }
-
-    public function scopeCancelled(Builder $query): Builder
-    {
-        return $query->where('status', 'cancelled');
-    }
-
-    public function scopeIncoming(Builder $query): Builder
-    {
-        return $query->where('direction', 'incoming');
-    }
-
-    public function scopeOutgoing(Builder $query): Builder
-    {
-        return $query->where('direction', 'outgoing');
-    }
-
     protected function casts(): array
     {
         return [
             'send_amount' => 'decimal:4',
             'receive_amount' => 'decimal:4',
-            'exchange_rate' => 'decimal:6',
             'commission_amount' => 'decimal:4',
             'completed_at' => 'datetime',
             'cancelled_at' => 'datetime',

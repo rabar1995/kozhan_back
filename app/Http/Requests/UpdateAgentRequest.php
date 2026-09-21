@@ -18,7 +18,6 @@ class UpdateAgentRequest extends FormRequest
             'phone' => ['nullable', 'string', 'max:255'],
             'country' => ['nullable', 'string', 'max:255'],
             'city' => ['nullable', 'string', 'max:255'],
-            'commission_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
             // Multi-currency support: edit the handled currency set.
             'currency_ids' => ['nullable', 'array'],
             'currency_ids.*' => ['uuid', 'exists:currencies,id'],

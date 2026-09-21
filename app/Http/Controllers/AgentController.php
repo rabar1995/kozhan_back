@@ -26,7 +26,7 @@ class AgentController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $agents = Agent::with(['currencyAccounts.receivableAccount:id,current_balance', 'currencyAccounts.payableAccount:id,current_balance', 'currencyAccounts.currency:id,code', 'balanceCurrency:id,code,symbol', 'receivableAccount:id,name,current_balance', 'payableAccount:id,name,current_balance'])
+        $agents = Agent::with(['currencyAccounts.account:id,current_balance', 'currencyAccounts.receivableAccount:id,current_balance', 'currencyAccounts.payableAccount:id,current_balance', 'currencyAccounts.currency:id,code', 'balanceCurrency:id,code,symbol', 'receivableAccount:id,name,current_balance', 'payableAccount:id,name,current_balance'])
             ->when($request->filled('active'), fn ($q) => $q->where('is_active', true))
             ->orderBy('name')
             ->get();
@@ -72,39 +72,9 @@ class AgentController extends Controller
         }
 
         return $this->ok(
-            $agent->load(['currencyAccounts.receivableAccount', 'currencyAccounts.payableAccount', 'currencyAccounts.currency', 'balanceCurrency', 'receivableAccount', 'payableAccount']),
+            $agent->load(['currencyAccounts.account', 'currencyAccounts.receivableAccount', 'currencyAccounts.payableAccount', 'currencyAccounts.currency', 'balanceCurrency', 'receivableAccount', 'payableAccount']),
             'Agent updated.'
         );
-    }
-
-    /**
-     * Show one agent.
-     */
-    public function show(string $id): JsonResponse
-    {
-        return $this->ok(Agent::with(['currencyAccounts.receivableAccount', 'currencyAccounts.payableAccount', 'currencyAccounts.currency', 'balanceCurrency', 'receivableAccount', 'payableAccount'])->findOrFail($id));
-    }
-
-    /**
-     * Debtor/creditor status of an agent with account amounts.
-     */
-    public function balance(string $id): JsonResponse
-    {
-        $agent = Agent::with(['balanceCurrency:id,code,symbol', 'receivableAccount:id,name,current_balance', 'payableAccount:id,name,current_balance'])
-            ->findOrFail($id);
-
-        return $this->ok([
-            'agent_id' => $agent->id,
-            'name' => $agent->name,
-            'classification' => $agent->classification,
-            'net_balance' => $agent->net_balance,
-            'currency' => $agent->balanceCurrency?->code,
-            'receivable_balance' => $agent->receivableAccount?->current_balance,
-            'payable_balance' => $agent->payableAccount?->current_balance,
-            // Per-currency breakdown for multi-currency agents.
-            'allow_all_currencies' => $agent->allow_all_currencies,
-            'balances' => $agent->balances,
-        ]);
     }
 
     /**
@@ -114,7 +84,7 @@ class AgentController extends Controller
     {
         $agent = Agent::findOrFail($id);
 
-        $entries = JournalEntry::whereIn('account_id', [$agent->receivable_account_id, $agent->payable_account_id])
+        $entries = JournalEntry::whereIn('account_id', $this->agentAccountIds($agent))
             ->with(['transaction:id,tx_number,tx_type,description,is_void,created_at', 'currency:id,code,symbol'])
             ->when($request->filled('date_from'), fn ($q) => $q->where('created_at', '>=', $request->date('date_from')->startOfDay()))
             ->when($request->filled('date_to'), fn ($q) => $q->where('created_at', '<=', $request->date('date_to')->endOfDay()))
@@ -122,5 +92,22 @@ class AgentController extends Controller
             ->paginate($request->integer('per_page', 50));
 
         return $this->ok($entries);
+    }
+
+    /**
+     * Every ledger account belonging to the agent across currencies:
+     * the single agent_wallet account, plus any legacy receivable/payable
+     * columns.
+     *
+     * @return array<int, string>
+     */
+    private function agentAccountIds(Agent $agent): array
+    {
+        return collect([$agent->receivable_account_id, $agent->payable_account_id])
+            ->merge($agent->currencyAccounts()->get()->pluck('account_id'))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
     }
 }

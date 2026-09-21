@@ -11,10 +11,11 @@ class AccountTypeController extends Controller
     use ApiResponse;
 
     /**
-     * List all account types (for the account creation form).
+     * List account types (for the account creation form), excluding
+     * the hidden system type (Owner's Equity).
      */
     public function index(): JsonResponse
     {
-        return $this->ok(AccountType::orderBy('code')->get());
+        return $this->ok(AccountType::where('code', '!=', 'owner_equity')->orderBy('code')->get());
     }
 }

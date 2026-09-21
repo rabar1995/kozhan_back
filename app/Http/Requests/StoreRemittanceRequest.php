@@ -25,7 +25,6 @@ class StoreRemittanceRequest extends FormRequest
             'send_currency_id' => ['required', 'uuid', 'exists:currencies,id'],
             'receive_amount' => ['required', 'numeric', 'min:0.01'],
             'receive_currency_id' => ['required', 'uuid', 'exists:currencies,id'],
-            'exchange_rate' => ['required', 'numeric', 'min:0.000001'],
             'commission_amount' => ['nullable', 'numeric', 'min:0'],
             'commission_currency_id' => ['nullable', 'uuid', 'exists:currencies,id'],
             'commission_type' => ['required', 'in:earned,paid'],

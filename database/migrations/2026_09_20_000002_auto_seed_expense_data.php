@@ -22,7 +22,7 @@ return new class extends Migration
 
     private const ACCOUNT_TYPES = [
         'operating_expense' => 'Operating Expenses',
-        'commission_expense' => 'Commission Expense',
+        'commission' => 'Commission',
     ];
 
     public function up(): void

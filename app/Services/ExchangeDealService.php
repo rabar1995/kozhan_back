@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Models\Account;
-use App\Models\AccountType;
 use App\Models\ExchangeDeal;
 use App\Models\Currency;
 use App\Models\User;
@@ -30,9 +29,6 @@ class ExchangeDealService
      *   Both legs are booked atomically: send leg + settle leg, so the
      *   receive wallet actually gets the receive amount and the FX
      *   spread (receive_amount - send_amount) is booked as P/L.
-     *
-     * @param  array  $data  Validated request data
-     * @param  User  $user  Acting user (owner only)
      */
     public function openDeal(array $data, User $user): ExchangeDeal
     {
@@ -60,7 +56,7 @@ class ExchangeDealService
 
             $this->book(
                 $officeId,
-                'Deal opened — sent from '.$wallet->name.($data['status'] === 'completed' ? ' (done in same action)' : ''),
+                'Deal opened — sent from '.$wallet->name,
                 [
                     $this->entry($pending->id, 'debit', $amount, $wallet->currency_id),
                     $this->entry($wallet->id, 'credit', $amount, $wallet->currency_id),
@@ -89,20 +85,9 @@ class ExchangeDealService
 
     /**
      * Close an open deal: the money comes back / is paid out in another
-     * wallet.
-     *
-     * Closing a deal_send (person returns the money):
-     *      DR settle wallet (settle_amount)
-     *      CR pending       (amount)
-     * Closing a deal_receive (owner pays the person back):
-     *      DR pending       (amount)
-     *      CR settle wallet (settle_amount)
-     * The numeric spread (settle_amount - amount) is booked as
-     * profit/loss in the settle wallet's currency.
-     *
-     * @param  string  $openTxId  UUID of the deal_send / deal_receive row
-     * @param  array  $data  Validated request data
-     * @param  User  $user  Acting user (owner only)
+     * wallet.  The numeric spread (settle_amount - amount) is booked as
+     * profit/loss on the single Commission card in the settle wallet's
+     * currency.
      */
     public function settleDeal(string $openTxId, array $data, User $user): ExchangeDeal
     {
@@ -259,28 +244,7 @@ class ExchangeDealService
      */
     private function findPendingAccount(string $officeId, string $currencyId): Account
     {
-        $pending = Account::withoutGlobalScopes()
-            ->where('office_id', $officeId)
-            ->where('currency_id', $currencyId)
-            ->whereHas('accountType', fn ($q) => $q->where('code', 'exchange_pending'))
-            ->first();
-
-        if ($pending) {
-            return $pending;
-        }
-
-        $type = AccountType::where('code', 'exchange_pending')->firstOrFail();
-        $code = Currency::findOrFail($currencyId)->code;
-
-        return Account::create([
-            'office_id' => $officeId,
-            'account_type_id' => $type->id,
-            'currency_id' => $currencyId,
-            'name' => 'Pending Deals - '.strtoupper($code),
-            'visibility' => 'owner_private',
-            'current_balance' => 0,
-            'is_active' => true,
-        ]);
+        return $this->accounting->findOrCreateOfficeAccount($officeId, 'exchange_pending', $currencyId, 'owner_private');
     }
 
     /**
@@ -304,11 +268,8 @@ class ExchangeDealService
     }
 
     /**
-     * Numeric balancing line for cross-currency legs. Mirrors the
-     * commission handling used by RemittanceService for FX spreads.
-     *
-     * @param  float  $spreadNum  settle_amount - amount (numeric)
-     * @param  bool  $amountSideIsDebit  whether the leg-1 amount side is a debit
+     * Numeric balancing line for cross-currency legs, posted on the
+     * single Commission card (credit = profit, debit = cost — net).
      */
     private function spreadEntry(float $spreadNum, bool $amountSideIsDebit, string $settleCurrencyId, string $officeId): ?array
     {
@@ -319,11 +280,7 @@ class ExchangeDealService
         $isRevenue = $amountSideIsDebit ? $spreadNum < 0 : $spreadNum > 0;
 
         return [
-            'account_id' => $this->findOfficeAccountByType(
-                $officeId,
-                $isRevenue ? 'commission_revenue' : 'commission_expense',
-                $settleCurrencyId,
-            )->id,
+            'account_id' => $this->accounting->findOrCreateOfficeAccount($officeId, 'commission', $settleCurrencyId)->id,
             'entry_type' => $isRevenue ? 'credit' : 'debit',
             'amount' => abs($spreadNum),
             'currency_id' => $settleCurrencyId,
@@ -348,36 +305,6 @@ class ExchangeDealService
     private function nextNumber(string $officeId): string
     {
         return DB::select('SELECT fn_next_sequence(?, ?) AS number', [$officeId, 'exchange_deal'])[0]->number;
-    }
-
-    /**
-     * Find an office account by account type code and currency, creating
-     * it (office_shared) when it does not exist yet.
-     */
-    private function findOfficeAccountByType(string $officeId, string $typeCode, string $currencyId): Account
-    {
-        $account = Account::withoutGlobalScopes()
-            ->where('office_id', $officeId)
-            ->where('currency_id', $currencyId)
-            ->whereHas('accountType', fn ($q) => $q->where('code', $typeCode))
-            ->first();
-
-        if ($account) {
-            return $account;
-        }
-
-        $type = AccountType::where('code', $typeCode)->firstOrFail();
-        $code = Currency::findOrFail($currencyId)->code;
-
-        return Account::create([
-            'office_id' => $officeId,
-            'account_type_id' => $type->id,
-            'currency_id' => $currencyId,
-            'name' => $type->name.' - '.$code,
-            'visibility' => 'office_shared',
-            'current_balance' => 0,
-            'is_active' => true,
-        ]);
     }
 
     /**

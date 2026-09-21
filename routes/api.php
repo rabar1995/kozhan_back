@@ -8,7 +8,6 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CurrencyController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ExchangeDealController;
-use App\Http\Controllers\ExchangeRateController;
 use App\Http\Controllers\ExpenseController;
 use App\Http\Controllers\RemittanceController;
 use App\Http\Controllers\ReportController;
@@ -30,16 +29,13 @@ Route::middleware(['auth:sanctum', 'audit'])->group(function () {
 
     Route::get('/accounts/balances', [AccountController::class, 'balances']);
     Route::get('/accounts', [AccountController::class, 'index']);
-    Route::get('/accounts/{id}', [AccountController::class, 'show']);
     Route::get('/accounts/{id}/ledger', [AccountController::class, 'ledger']);
 
     Route::get('/agents', [AgentController::class, 'index']);
     Route::post('/uploads/logo', [UploadController::class, 'store']);
     Route::post('/agents', [AgentController::class, 'store']);
     Route::patch('/agents/{id}', [AgentController::class, 'update']);
-    Route::get('/agents/{id}/balance', [AgentController::class, 'balance']);
     Route::get('/agents/{id}/ledger', [AgentController::class, 'ledger']);
-    Route::get('/agents/{id}', [AgentController::class, 'show']);
     Route::get('/remittances/pending', [RemittanceController::class, 'pending']);
     Route::post('/remittances/incoming', [RemittanceController::class, 'createIncoming']);
     Route::post('/remittances/outgoing', [RemittanceController::class, 'createOutgoing']);
@@ -50,9 +46,6 @@ Route::middleware(['auth:sanctum', 'audit'])->group(function () {
     Route::get('/expenses/categories', [ExpenseController::class, 'categories']);
     Route::get('/expenses', [ExpenseController::class, 'index']);
     Route::post('/expenses', [ExpenseController::class, 'store']);
-
-    Route::get('/exchange-rates', [ExchangeRateController::class, 'index']);
-    Route::post('/exchange-rates', [ExchangeRateController::class, 'store']);
 
     Route::middleware('role:owner')->group(function () {
         Route::post('/accounts', [AccountController::class, 'store']);
@@ -69,9 +62,6 @@ Route::middleware(['auth:sanctum', 'audit'])->group(function () {
         Route::get('/transfers', [TransferController::class, 'index']);
 
         Route::get('/reports/profit-loss', [ReportController::class, 'profitLoss']);
-        Route::get('/reports/commission-summary', [ReportController::class, 'commissionSummary']);
-        Route::get('/reports/agent-balances', [ReportController::class, 'agentBalances']);
-        Route::get('/reports/daily-summary', [ReportController::class, 'dailySummary']);
 
         Route::get('/users', [UserController::class, 'index']);
         Route::post('/users', [UserController::class, 'store']);

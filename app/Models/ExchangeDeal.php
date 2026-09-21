@@ -72,11 +72,6 @@ class ExchangeDeal extends Model
         return $this->belongsTo(User::class, 'cancelled_by');
     }
 
-    public function scopeCompleted(Builder $query): Builder
-    {
-        return $query->where('status', 'completed');
-    }
-
     protected function casts(): array
     {
         return [
