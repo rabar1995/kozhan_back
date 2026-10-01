@@ -4,9 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Http\Concerns\ApiResponse;
 use App\Models\Account;
+use App\Models\AgentCurrencyAccount;
 use App\Models\JournalEntry;
-use App\Models\Transaction;
 use App\Services\AccountingService;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -114,7 +115,7 @@ class AccountController extends Controller
      */
     public function update(string $id, Request $request): JsonResponse
     {
-        $account = Account::withoutGlobalScopes()->where('office_id', $request->user()->office_id)->findOrFail($id);
+        $account = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)->where('office_id', $request->user()->office_id)->findOrFail($id);
 
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
@@ -128,18 +129,18 @@ class AccountController extends Controller
 
         /**
          * Account types whose balances are ledger-managed only. Manual
-         * balance edits are blocked: agent balances move solely through
-         * remittances, payouts and settlements.
+         * balance edits are blocked for these internal ledger accounts.
+         * Agent wallets can be adjusted by the owner (posted against
+         * Owner's Equity) so they can be brought to zero and deleted.
          */
-        $lockedTypeCodes = ['agent_wallet', 'exchange_pending', 'owner_equity'];
+        $lockedTypeCodes = ['exchange_pending', 'owner_equity'];
         $account->loadMissing('accountType');
         $isLockedType = in_array($account->accountType?->code, $lockedTypeCodes, true);
 
         if ($isLockedType && $balance !== null
             && round(abs($balance - round((float) $account->current_balance, 4)), 4) > 0.0001) {
             return $this->fail(
-                'The balance of this wallet cannot be changed manually. '
-                .'Agent balances only move through remittances, payouts and settlements.',
+                'The balance of this system wallet cannot be changed manually.',
                 422
             );
         }
@@ -152,7 +153,8 @@ class AccountController extends Controller
 
         $targetBalance = $balance === null ? null : round((float) $balance, 4);
         $currentBalance = round((float) $account->current_balance, 4);
-        $delta = round($targetBalance - $currentBalance, 4);
+        // No new_balance sent (e.g. a rename): leave the balance untouched.
+        $delta = $targetBalance === null ? 0.0 : round($targetBalance - $currentBalance, 4);
 
         $account = DB::transaction(function () use ($account, $data, $delta, $request) {
             $account->fill($data)->save();
@@ -205,7 +207,7 @@ class AccountController extends Controller
      */
     public function deactivate(string $id, Request $request): JsonResponse
     {
-        $account = Account::withoutGlobalScopes()->where('office_id', $request->user()->office_id)->findOrFail($id);
+        $account = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)->where('office_id', $request->user()->office_id)->findOrFail($id);
 
         if (round(abs((float) $account->current_balance), 4) > 0) {
             return $this->fail('The wallet cannot be deactivated while its balance is not zero.', 422);
@@ -221,7 +223,7 @@ class AccountController extends Controller
      */
     public function activate(string $id, Request $request): JsonResponse
     {
-        $account = Account::withoutGlobalScopes()->where('office_id', $request->user()->office_id)->findOrFail($id);
+        $account = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)->where('office_id', $request->user()->office_id)->findOrFail($id);
 
         $account->forceFill(['is_active' => true])->save();
 
@@ -229,76 +231,46 @@ class AccountController extends Controller
     }
 
     /**
-     * Permanently delete an account/wallet (owner only).
-     * Only allowed when the balance is zero. Journal entries referencing
-     * the wallet (deals, transfers, expenses, remittances, adjustments)
-     * normally block deletion; passing ?force=true erases the wallet's
-     * ledger records together with the wallet itself.
+     * Delete an account/wallet (owner only).
+     * Only allowed when the balance is zero (the owner can bring it to
+     * zero first via the balance adjustment on update). The wallet is
+     * soft-deleted so the immutable ledger history that references it
+     * stays intact. System accounts cannot be deleted.
      */
     public function destroy(string $id, Request $request): JsonResponse
     {
-        $account = Account::withoutGlobalScopes()->where('office_id', $request->user()->office_id)->findOrFail($id);
+        $account = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)
+            ->where('office_id', $request->user()->office_id)
+            ->with('accountType')
+            ->findOrFail($id);
 
-        if (round(abs((float) $account->current_balance), 4) > 0) {
-            return $this->fail('The wallet cannot be deleted while its balance is not zero. Deactivate it instead.', 422);
+        if (in_array($account->accountType?->code, ['owner_equity', 'exchange_pending'], true)) {
+            return $this->fail('System wallets cannot be deleted.', 422);
         }
 
-        $txIds = Transaction::whereHas('journalEntries', fn ($q) => $q->where('account_id', $account->id))->pluck('id');
+        DB::transaction(function () use ($account) {
+            // Lock the row so a concurrent transaction cannot move the
+            // balance between the check and the delete.
+            $locked = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)
+                ->lockForUpdate()
+                ->findOrFail($account->id);
 
-        if ($txIds->isNotEmpty() && ! $request->boolean('force')) {
-            return $this->fail('The wallet cannot be deleted because it has ledger history. Deactivate it instead.', 422);
-        }
-
-        DB::transaction(function () use ($account, $txIds) {
-            if ($txIds->isNotEmpty()) {
-                // Open a transaction-local maintenance window so the
-                // immutability trigger allows this controlled cleanup.
-                DB::statement("SELECT set_config('app.journal_maintenance', 'on', true)");
-
-                // Accounts that will lose entries — captured before delete.
-                $affectedIds = array_values(
-                    JournalEntry::whereIn('transaction_id', $txIds)
-                        ->distinct()
-                        ->pluck('account_id')
-                        ->all()
-                );
-
-                JournalEntry::whereIn('transaction_id', $txIds)->delete();
-                Transaction::whereIn('id', $txIds)->delete();
-
-                // The balance trigger only fires on INSERT (never on
-                // DELETE), so mirror its math here for every account
-                // whose entries were just removed.
-                if ($affectedIds) {
-                    $accountPlaceholders = implode(',', array_fill(0, count($affectedIds), '?'));
-
-                    DB::statement(<<<SQL
-                        UPDATE accounts a
-                        SET current_balance = COALESCE(v.bal, 0), updated_at = NOW()
-                        FROM (
-                            SELECT je.account_id,
-                                   SUM(CASE
-                                       WHEN at.normal_balance = 'debit'
-                                           THEN CASE WHEN je.entry_type = 'debit' THEN je.amount ELSE -je.amount END
-                                       ELSE CASE WHEN je.entry_type = 'credit' THEN je.amount ELSE -je.amount END
-                                   END) AS bal
-                            FROM journal_entries je
-                            JOIN accounts ac ON ac.id = je.account_id
-                            JOIN account_types at ON at.id = ac.account_type_id
-                            WHERE je.account_id IN ({$accountPlaceholders})
-                            GROUP BY je.account_id
-                        ) v
-                        WHERE a.id = v.account_id
-                    SQL, $affectedIds);
-                }
+            if (round(abs((float) $locked->current_balance), 4) > 0) {
+                throw new HttpResponseException($this->fail(
+                    'The wallet cannot be deleted while its balance is not zero. Set the balance to 0 first.',
+                    422
+                ));
             }
 
-            $account->delete();
+            // An agent wallet is unlinked from its agent so the agent
+            // wallet is re-created on demand for later remittances.
+            AgentCurrencyAccount::where('account_id', $locked->id)->delete();
+
+            $locked->delete();
         });
 
         return $this->ok(null, 'Account deleted.');
     }
-
     /**
      * Journal entries (ledger) of an account, with optional date filters.
      */

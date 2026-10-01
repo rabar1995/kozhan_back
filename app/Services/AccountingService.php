@@ -20,7 +20,7 @@ class AccountingService
      */
     public function findOrCreateOfficeAccount(string $officeId, string $typeCode, string $currencyId, string $visibility = 'office_shared'): Account
     {
-        $account = Account::withoutGlobalScopes()
+        $account = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)
             ->where('office_id', $officeId)
             ->where('currency_id', $currencyId)
             ->whereHas('accountType', fn ($q) => $q->where('code', $typeCode))

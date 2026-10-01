@@ -28,8 +28,8 @@ class TransferService
     public function transfer(array $data, User $user): Transfer
     {
         return DB::transaction(function () use ($data, $user) {
-            $from = Account::withoutGlobalScopes()->findOrFail($data['from_account_id']);
-            $to = Account::withoutGlobalScopes()->findOrFail($data['to_account_id']);
+            $from = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)->findOrFail($data['from_account_id']);
+            $to = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)->findOrFail($data['to_account_id']);
 
             if ($from->office_id !== $user->office_id || $to->office_id !== $user->office_id) {
                 throw new RuntimeException('Both accounts must belong to your office.');

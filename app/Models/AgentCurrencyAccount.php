@@ -24,16 +24,16 @@ class AgentCurrencyAccount extends Model
 
     public function account(): BelongsTo
     {
-        return $this->belongsTo(\App\Models\Account::class, 'account_id');
+        return $this->belongsTo(\App\Models\Account::class, 'account_id')->withTrashed();
     }
 
     public function receivableAccount(): BelongsTo
     {
-        return $this->belongsTo(Account::class, 'receivable_account_id');
+        return $this->belongsTo(Account::class, 'receivable_account_id')->withTrashed();
     }
 
     public function payableAccount(): BelongsTo
     {
-        return $this->belongsTo(Account::class, 'payable_account_id');
+        return $this->belongsTo(Account::class, 'payable_account_id')->withTrashed();
     }
 }

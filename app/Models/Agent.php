@@ -28,12 +28,12 @@ class Agent extends Model
 
     public function receivableAccount(): BelongsTo
     {
-        return $this->belongsTo(Account::class, 'receivable_account_id');
+        return $this->belongsTo(Account::class, 'receivable_account_id')->withTrashed();
     }
 
     public function payableAccount(): BelongsTo
     {
-        return $this->belongsTo(Account::class, 'payable_account_id');
+        return $this->belongsTo(Account::class, 'payable_account_id')->withTrashed();
     }
 
     public function balanceCurrency(): BelongsTo

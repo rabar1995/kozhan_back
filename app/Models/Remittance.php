@@ -72,7 +72,15 @@ class Remittance extends Model
 
     public function paymentAccount(): BelongsTo
     {
-        return $this->belongsTo(Account::class, 'payment_account_id');
+        return $this->belongsTo(Account::class, 'payment_account_id')->withTrashed();
+    }
+
+    /**
+     * Remittances still waiting to be paid out / completed.
+     */
+    public function scopePending(Builder $query): Builder
+    {
+        return $query->where('status', 'pending');
     }
 
     protected function casts(): array

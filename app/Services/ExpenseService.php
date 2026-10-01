@@ -30,10 +30,10 @@ class ExpenseService
     public function record(array $data, User $user): Expense
     {
         return DB::transaction(function () use ($data, $user) {
-            $paidFrom = \App\Models\Account::withoutGlobalScopes()->findOrFail($data['paid_from_account_id']);
+            $paidFrom = \App\Models\Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)->findOrFail($data['paid_from_account_id']);
 
             if (! empty($data['expense_account_id'])) {
-                $expenseAccount = \App\Models\Account::withoutGlobalScopes()->findOrFail($data['expense_account_id']);
+                $expenseAccount = \App\Models\Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)->findOrFail($data['expense_account_id']);
             } else {
                 $expenseAccount = $this->accounting->findOrCreateOfficeAccount($user->office_id, 'operating_expense', $data['currency_id']);
             }

@@ -26,7 +26,7 @@ class ExchangeDeal extends Model
      */
     public function account(): BelongsTo
     {
-        return $this->belongsTo(Account::class, 'account_id');
+        return $this->belongsTo(Account::class, 'account_id')->withTrashed();
     }
 
     public function currency(): BelongsTo
@@ -36,7 +36,7 @@ class ExchangeDeal extends Model
 
     public function settleAccount(): BelongsTo
     {
-        return $this->belongsTo(Account::class, 'settle_account_id');
+        return $this->belongsTo(Account::class, 'settle_account_id')->withTrashed();
     }
 
     public function settleCurrency(): BelongsTo

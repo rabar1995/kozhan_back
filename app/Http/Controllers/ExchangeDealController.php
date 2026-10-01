@@ -26,7 +26,7 @@ class ExchangeDealController extends Controller
         $officeId = $request->user()->office_id;
 
         return $this->ok([
-            'wallets' => Account::withoutGlobalScopes()
+            'wallets' => Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)
                 ->with('currency:id,code,symbol')
                 ->where('office_id', $officeId)
                 ->where('visibility', 'owner_private')

@@ -195,7 +195,7 @@ class ExchangeDealService
      */
     public function summary(string $officeId): array
     {
-        $pendingAccounts = Account::withoutGlobalScopes()
+        $pendingAccounts = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)
             ->with('currency:id,code,symbol')
             ->where('office_id', $officeId)
             ->where('is_active', true)
@@ -313,7 +313,7 @@ class ExchangeDealService
      */
     private function findOwnWallet(string $accountId, string $officeId): Account
     {
-        $account = Account::withoutGlobalScopes()->findOrFail($accountId);
+        $account = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)->findOrFail($accountId);
 
         if ($account->office_id !== $officeId) {
             throw new InvalidArgumentException('The selected wallet does not belong to your office.');

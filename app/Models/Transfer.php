@@ -21,12 +21,12 @@ class Transfer extends Model
 
     public function fromAccount(): BelongsTo
     {
-        return $this->belongsTo(Account::class, 'from_account_id');
+        return $this->belongsTo(Account::class, 'from_account_id')->withTrashed();
     }
 
     public function toAccount(): BelongsTo
     {
-        return $this->belongsTo(Account::class, 'to_account_id');
+        return $this->belongsTo(Account::class, 'to_account_id')->withTrashed();
     }
 
     public function currency(): BelongsTo

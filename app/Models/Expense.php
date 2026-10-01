@@ -26,12 +26,12 @@ class Expense extends Model
 
     public function paidFromAccount(): BelongsTo
     {
-        return $this->belongsTo(Account::class, 'paid_from_account_id');
+        return $this->belongsTo(Account::class, 'paid_from_account_id')->withTrashed();
     }
 
     public function expenseAccount(): BelongsTo
     {
-        return $this->belongsTo(Account::class, 'expense_account_id');
+        return $this->belongsTo(Account::class, 'expense_account_id')->withTrashed();
     }
 
     public function currency(): BelongsTo
