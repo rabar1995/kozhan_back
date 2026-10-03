@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Concerns\ApiResponse;
 use App\Models\Account;
+use App\Models\Agent;
 use App\Models\AgentCurrencyAccount;
 use App\Models\JournalEntry;
 use App\Services\AccountingService;
@@ -22,13 +23,19 @@ class AccountController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $accounts = Account::with(['accountType', 'currency'])
+        $accounts = Account::with(['accountType', 'currency', 'agentCurrencyAccount.agent:id,name'])
             ->withoutSystemTypes()
             ->when($request->filled('type'), fn ($q) => $q->byType($request->string('type')))
             ->when($request->filled('currency_id'), fn ($q) => $q->byCurrency($request->string('currency_id')))
             ->when($request->filled('active'), fn ($q) => $q->active())
             ->orderBy('name')
-            ->get();
+            ->get()
+            ->map(function (Account $account) {
+                $agent = $account->agentCurrencyAccount?->agent;
+                $account->setAttribute('agent', $agent ? ['id' => $agent->id, 'name' => $agent->name] : null);
+
+                return $account;
+            });
 
         return $this->ok($accounts);
     }
@@ -48,7 +55,7 @@ class AccountController extends Controller
             'visibility' => ['required', 'in:owner_private,office_shared'],
             'is_active' => ['sometimes', 'boolean'],
             'logo_url' => ['nullable', 'url', 'max:255'],
-            'opening_balance' => ['nullable', 'numeric', 'min:0'],
+            'opening_balance' => ['nullable', 'numeric'],
         ]);
 
         $openingBalance = round((float) ($data['opening_balance'] ?? 0), 4);
@@ -63,13 +70,20 @@ class AccountController extends Controller
                 'current_balance' => 0,
             ]);
 
-            if ($openingBalance > 0) {
+            // An opening balance may be positive (cash we hold / we owe) or
+            // negative (someone owes us). Either way post a balanced
+            // entry against Owner's Equity, flipping the sides by sign.
+            if (abs($openingBalance) >= 0.0001) {
                 $equity = app(AccountingService::class)->findOrCreateOfficeAccount(
                     $user->office_id,
                     'owner_equity',
                     $data['currency_id'],
                     'owner_private'
                 );
+
+                $amount = abs($openingBalance);
+                $debitSide = $openingBalance > 0 ? $account : $equity;
+                $creditSide = $openingBalance > 0 ? $equity : $account;
 
                 app(AccountingService::class)->createTransaction([
                     'office_id' => $user->office_id,
@@ -82,18 +96,18 @@ class AccountController extends Controller
                     'reference_id' => $account->id,
                     'entries' => [
                         [
-                            'account_id' => $account->id,
+                            'account_id' => $debitSide->id,
                             'entry_type' => 'debit',
-                            'amount' => $openingBalance,
+                            'amount' => $amount,
                             'currency_id' => $data['currency_id'],
                             'description' => 'Opening balance',
                         ],
                         [
-                            'account_id' => $equity->id,
+                            'account_id' => $creditSide->id,
                             'entry_type' => 'credit',
-                            'amount' => $openingBalance,
+                            'amount' => $amount,
                             'currency_id' => $data['currency_id'],
-                            'description' => 'Opening balance (owner capital)',
+                            'description' => 'Opening balance (owner equity)',
                         ],
                     ],
                 ]);
@@ -125,7 +139,7 @@ class AccountController extends Controller
             'is_active' => ['sometimes', 'boolean'],
             'logo_url' => ['nullable', 'url', 'max:255'],
         ]);
-        $balance = $request->validate(['new_balance' => ['nullable', 'numeric', 'min:0']])['new_balance'] ?? null;
+        $balance = $request->validate(['new_balance' => ['nullable', 'numeric']])['new_balance'] ?? null;
 
         /**
          * Account types whose balances are ledger-managed only. Manual
@@ -248,7 +262,13 @@ class AccountController extends Controller
             return $this->fail('System wallets cannot be deleted.', 422);
         }
 
-        DB::transaction(function () use ($account) {
+        // Agents whose wallet is being removed — used to delete the agent
+        // once its last wallet is gone.
+        $agentIds = $account->accountType?->code === 'agent_wallet'
+            ? AgentCurrencyAccount::where('account_id', $account->id)->pluck('agent_id')->unique()->values()->all()
+            : [];
+
+        DB::transaction(function () use ($account, $agentIds) {
             // Lock the row so a concurrent transaction cannot move the
             // balance between the check and the delete.
             $locked = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)
@@ -267,6 +287,17 @@ class AccountController extends Controller
             AgentCurrencyAccount::where('account_id', $locked->id)->delete();
 
             $locked->delete();
+
+            // Once an agent has no wallets left, soft-delete the agent too
+            // so it disappears from lists while its remittance history
+            // (FK, no cascade) stays intact.
+            foreach ($agentIds as $agentId) {
+                $agent = Agent::find($agentId);
+
+                if ($agent && $agent->currencyAccounts()->count() === 0) {
+                    $agent->delete();
+                }
+            }
         });
 
         return $this->ok(null, 'Account deleted.');

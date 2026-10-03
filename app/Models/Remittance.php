@@ -22,7 +22,8 @@ class Remittance extends Model
 
     public function agent(): BelongsTo
     {
-        return $this->belongsTo(Agent::class);
+        // Deleted agents stay visible on their historical remittances.
+        return $this->belongsTo(Agent::class)->withTrashed();
     }
 
     public function sendCurrency(): BelongsTo

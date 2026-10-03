@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Account extends Model
@@ -40,6 +41,14 @@ class Account extends Model
     public function journalEntries(): HasMany
     {
         return $this->hasMany(JournalEntry::class);
+    }
+
+    /**
+     * Link row when this account is an agent's wallet (agent_wallet type).
+     */
+    public function agentCurrencyAccount(): HasOne
+    {
+        return $this->hasOne(AgentCurrencyAccount::class, 'account_id');
     }
 
     public function scopeActive(Builder $query): Builder
