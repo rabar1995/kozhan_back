@@ -39,6 +39,7 @@ class ExchangeDealController extends Controller
                     'currency_id' => $a->currency_id,
                     'currency_code' => $a->currency?->code,
                     'logo_url' => $a->logo_url,
+                    'wallet_group' => $a->wallet_group,
                     'visibility' => $a->visibility,
                     'account_type_code' => $a->accountType?->code,
                 ]),

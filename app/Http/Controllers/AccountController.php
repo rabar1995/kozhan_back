@@ -52,11 +52,13 @@ class AccountController extends Controller
             'account_type_id' => ['required', 'uuid', 'exists:account_types,id'],
             'currency_id' => ['required', 'uuid', 'exists:currencies,id'],
             'name' => ['required', 'string', 'max:255'],
-            'visibility' => ['required', 'in:owner_private,office_shared'],
+            'wallet_group' => ['required', 'in:office,personal,agents,private'],
             'is_active' => ['sometimes', 'boolean'],
             'logo_url' => ['nullable', 'url', 'max:255'],
             'opening_balance' => ['nullable', 'numeric'],
         ]);
+
+        $data['visibility'] = in_array($data['wallet_group'], ['office', 'agents'], true) ? 'office_shared' : 'owner_private';
 
         $openingBalance = round((float) ($data['opening_balance'] ?? 0), 4);
         unset($data['opening_balance']);
@@ -135,10 +137,15 @@ class AccountController extends Controller
             'name' => ['sometimes', 'string', 'max:255'],
             'account_type_id' => ['sometimes', 'uuid', 'exists:account_types,id'],
             'currency_id' => ['sometimes', 'uuid', 'exists:currencies,id'],
-            'visibility' => ['sometimes', 'in:owner_private,office_shared'],
+            'wallet_group' => ['sometimes', 'in:office,personal,agents,private'],
             'is_active' => ['sometimes', 'boolean'],
             'logo_url' => ['nullable', 'url', 'max:255'],
         ]);
+
+        if (isset($data['wallet_group'])) {
+            $data['visibility'] = in_array($data['wallet_group'], ['office', 'agents'], true) ? 'office_shared' : 'owner_private';
+        }
+
         $balance = $request->validate(['new_balance' => ['nullable', 'numeric']])['new_balance'] ?? null;
 
         /**
@@ -172,6 +179,11 @@ class AccountController extends Controller
 
         $account = DB::transaction(function () use ($account, $data, $delta, $request) {
             $account->fill($data)->save();
+
+            // Agent wallets must always stay in the Agents group.
+            if ($account->accountType?->code === 'agent_wallet' && $account->wallet_group !== 'agents') {
+                $account->forceFill(['wallet_group' => 'agents', 'visibility' => 'office_shared'])->save();
+            }
 
             if ($delta !== 0.0 && abs($delta) >= 0.0001) {
                 $equity = app(AccountingService::class)->findOrCreateOfficeAccount(
