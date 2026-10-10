@@ -18,8 +18,8 @@ class ExchangeDealController extends Controller
     }
 
     /**
-     * The owner's private wallets (from Wallets & Safes) the deals
-     * move money between.
+     * All wallet accounts (Office, Personal and Agents) that exchange deals
+     * can move money between. System ledger accounts are excluded.
      */
     public function formOptions(Request $request): JsonResponse
     {
@@ -27,19 +27,20 @@ class ExchangeDealController extends Controller
 
         return $this->ok([
             'wallets' => Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)
-                ->with('currency:id,code,symbol')
+                ->with('currency:id,code,symbol', 'accountType:id,code')
                 ->where('office_id', $officeId)
-                ->where('visibility', 'owner_private')
                 ->where('is_active', true)
                 ->withoutSystemTypes()
                 ->orderBy('name')
-                ->get(['id', 'name', 'currency_id', 'logo_url'])
+                ->get(['id', 'name', 'currency_id', 'logo_url', 'visibility', 'account_type_id'])
                 ->map(fn (Account $a) => [
                     'id' => $a->id,
                     'name' => $a->name,
                     'currency_id' => $a->currency_id,
                     'currency_code' => $a->currency?->code,
                     'logo_url' => $a->logo_url,
+                    'visibility' => $a->visibility,
+                    'account_type_code' => $a->accountType?->code,
                 ]),
         ]);
     }

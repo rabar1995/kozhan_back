@@ -308,19 +308,21 @@ class ExchangeDealService
     }
 
     /**
-     * Validate that an owner_private wallet belongs to the acting
-     * user's office and is active.
+     * Validate that the selected account is a wallet belonging to the
+     * acting user's office and is active. System ledger accounts are not allowed.
      */
     private function findOwnWallet(string $accountId, string $officeId): Account
     {
-        $account = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)->findOrFail($accountId);
+        $account = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)
+            ->with('accountType:id,code')
+            ->findOrFail($accountId);
 
         if ($account->office_id !== $officeId) {
             throw new InvalidArgumentException('The selected wallet does not belong to your office.');
         }
 
-        if ($account->visibility !== 'owner_private') {
-            throw new InvalidArgumentException('Exchange deals can only use owner private wallets.');
+        if (in_array($account->accountType?->code, ['owner_equity', 'exchange_pending'], true)) {
+            throw new InvalidArgumentException('Exchange deals cannot use ledger accounts.');
         }
 
         if (! $account->is_active) {
