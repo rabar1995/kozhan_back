@@ -347,9 +347,11 @@ class AccountController extends Controller
                 'type' => $a->accountType?->code,
                 'category' => $a->accountType?->category,
                 'visibility' => $a->visibility,
+                'wallet_group' => $a->wallet_group,
                 'currency' => $a->currency?->code,
                 'symbol' => $a->currency?->symbol,
                 'current_balance' => $a->current_balance,
+                'logo_url' => $a->logo_url,
             ]);
 
         return $this->ok($accounts);
