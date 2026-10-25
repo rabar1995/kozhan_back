@@ -101,7 +101,9 @@ class RemittanceController extends Controller
                         ->where('office_id', $request->user()->office_id)
                         ->first();
 
-                    if (! $account || $account->wallet_group !== 'office') {
+                    if (! $account) {
+                        $fail('The selected payment account was not found or is inactive.');
+                    } elseif ($account->wallet_group !== 'office') {
                         $fail('The selected payment account must be an office account.');
                     }
                 },
