@@ -2,6 +2,8 @@
 
 namespace App\Http\Requests;
 
+use App\Models\Account;
+use App\Scopes\VisibilityScope;
 use Illuminate\Foundation\Http\FormRequest;
 
 class StoreRemittanceRequest extends FormRequest
@@ -32,8 +34,31 @@ class StoreRemittanceRequest extends FormRequest
                 $isOutgoing ? 'required' : 'nullable',
                 'uuid',
                 'exists:accounts,id',
+                $this->officeAccountRule(),
             ],
             'notes' => ['nullable', 'string'],
         ];
+    }
+
+    /**
+     * The cash/bank account used for an outgoing remittance must belong to
+     * the acting user's office and be an Office wallet (not agent/personal/private).
+     */
+    private function officeAccountRule(): \Closure
+    {
+        return function ($attribute, $value, $fail) {
+            if (! $value) {
+                return;
+            }
+
+            $account = Account::withoutGlobalScope(VisibilityScope::class)
+                ->where('id', $value)
+                ->where('office_id', $this->user()->office_id)
+                ->first();
+
+            if (! $account || $account->wallet_group !== 'office') {
+                $fail('The selected payment account must be an office account.');
+            }
+        };
     }
 }

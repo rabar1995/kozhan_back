@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Concerns\ApiResponse;
 use App\Http\Requests\StoreRemittanceRequest;
+use App\Models\Account;
 use App\Models\Remittance;
 use App\Services\RemittanceService;
 use Illuminate\Http\JsonResponse;
@@ -90,7 +91,21 @@ class RemittanceController extends Controller
     public function complete(string $id, Request $request): JsonResponse
     {
         $data = $request->validate([
-            'payment_account_id' => ['required', 'uuid', 'exists:accounts,id'],
+            'payment_account_id' => [
+                'required',
+                'uuid',
+                'exists:accounts,id',
+                function ($attribute, $value, $fail) use ($request) {
+                    $account = Account::withoutGlobalScope(\App\Scopes\VisibilityScope::class)
+                        ->where('id', $value)
+                        ->where('office_id', $request->user()->office_id)
+                        ->first();
+
+                    if (! $account || $account->wallet_group !== 'office') {
+                        $fail('The selected payment account must be an office account.');
+                    }
+                },
+            ],
         ]);
 
         try {
