@@ -16,13 +16,12 @@ class RemittanceService
     }
 
     /**
-     * Book an incoming remittance received from an agent.
+     * Record an incoming remittance received from an agent.
      *
-     * Booking entries: DR agent.receivable_account (send_amount)
-     *                  CR remittance_payable (send_amount).
-     * When commission > 0 a separate commission transaction is created:
-     * earned  => DR agent.receivable_account, CR commission
-     * paid    => DR commission,               CR agent.payable_account.
+     * No journal entry is posted yet; the ledger is updated only when the
+     * remittance is paid out. At that point:
+     *   - the agent wallet is debited (liability decrease)
+     *   - the office payout account is credited (asset decrease)
      *
      * @param  array  $data  Validated request data (agent_id, amounts, currencies, commission...)
      * @param  User  $user  Acting user (office is taken from the user)
@@ -54,40 +53,6 @@ class RemittanceService
                 'notes' => $data['notes'] ?? null,
                 'created_by' => $user->id,
             ]);
-
-            $payableAccount = $this->accounting->findOrCreateOfficeAccount($officeId, 'remittance_payable', $data['send_currency_id']);
-
-            $booking = $this->accounting->createTransaction([
-                'office_id' => $officeId,
-                'tx_type' => 'remittance',
-                'description' => 'Incoming remittance '.$remittance->remittance_number,
-                'created_by' => $user->id,
-                'reference_type' => 'remittance',
-                'reference_id' => $remittance->id,
-                'entries' => [
-                    [
-                        'account_id' => $this->agents->resolveAgentAccounts($agent, $data['send_currency_id'])->account_id,
-                        'entry_type' => 'debit',
-                        'amount' => $data['send_amount'],
-                        'currency_id' => $data['send_currency_id'],
-                    ],
-                    [
-                        'account_id' => $payableAccount->id,
-                        'entry_type' => 'credit',
-                        'amount' => $data['send_amount'],
-                        'currency_id' => $data['send_currency_id'],
-                    ],
-                ],
-            ]);
-
-            $remittance->booking_tx_id = $booking->id;
-
-            if ((float) ($data['commission_amount'] ?? 0) > 0) {
-                $commissionTx = $this->createCommissionTransaction($remittance, $agent, $officeId, $user);
-                $remittance->commission_tx_id = $commissionTx->id;
-            }
-
-            $remittance->save();
 
             return $remittance;
         });
@@ -218,11 +183,9 @@ class RemittanceService
                 $officeId = $user->office_id;
                 $agent = $remittance->agent;
 
-                $payableAccount = $this->accounting->findOrCreateOfficeAccount($officeId, 'remittance_payable', $remittance->send_currency_id);
-
                 $entries = [
                     [
-                        'account_id' => $payableAccount->id,
+                        'account_id' => $this->agents->resolveAgentAccounts($agent, $remittance->send_currency_id)->account_id,
                         'entry_type' => 'debit',
                         'amount' => $remittance->send_amount,
                         'currency_id' => $remittance->send_currency_id,
@@ -265,6 +228,11 @@ class RemittanceService
 
                 $remittance->settlement_tx_id = $settlement->id;
                 $remittance->payment_account_id = $paymentAccountId;
+
+                if ((float) ($remittance->commission_amount ?? 0) > 0) {
+                    $commissionTx = $this->createCommissionTransaction($remittance, $agent, $officeId, $user);
+                    $remittance->commission_tx_id = $commissionTx->id;
+                }
             }
 
             $remittance->status = 'completed';

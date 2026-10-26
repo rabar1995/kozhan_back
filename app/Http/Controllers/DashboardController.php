@@ -64,8 +64,9 @@ class DashboardController extends Controller
     }
 
     /**
-     * Agent wallet balances per currency: positive = the agent owes us,
-     * negative = we owe the agent.
+     * Agent wallet balances per currency: the agent_wallet is a liability,
+     * so positive = we owe the agent (payable), negative = the agent owes us
+     * (receivable).
      *
      * @return array{0: array<int, array{currency: string, amount: float}>, 1: array<int, array{currency: string, amount: float}>}
      */
@@ -81,8 +82,8 @@ class DashboardController extends Controller
             ->groupBy('c.code')
             ->orderBy('c.code')
             ->selectRaw('c.code AS currency,
-                SUM(CASE WHEN a.current_balance > 0 THEN a.current_balance ELSE 0 END) AS receivable,
-                SUM(CASE WHEN a.current_balance < 0 THEN -a.current_balance ELSE 0 END) AS payable')
+                SUM(CASE WHEN a.current_balance < 0 THEN -a.current_balance ELSE 0 END) AS receivable,
+                SUM(CASE WHEN a.current_balance > 0 THEN a.current_balance ELSE 0 END) AS payable')
             ->get();
 
         $pick = fn (string $field) => $rows

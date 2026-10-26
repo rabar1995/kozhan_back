@@ -49,9 +49,12 @@ class Agent extends Model
 
     /**
      * Classification derived from net_balance:
-     * net_balance > 0 => debtor (agent owes office),
-     * net_balance < 0 => creditor (office owes agent),
+     * net_balance < 0 => debtor (agent owes office),
+     * net_balance > 0 => creditor (office owes agent),
      * net_balance = 0 => settled.
+     *
+     * The agent_wallet is a liability (credit-normal), so a positive
+     * balance means the office holds money for / owes the agent.
      */
     /**
      * Logo: manually pasted image URL.
@@ -70,11 +73,11 @@ class Agent extends Model
         return Attribute::get(function () {
             $balance = (float) $this->net_balance;
 
-            if ($balance > 0) {
+            if ($balance < 0) {
                 return 'debtor';
             }
 
-            if ($balance < 0) {
+            if ($balance > 0) {
                 return 'creditor';
             }
 
@@ -118,7 +121,7 @@ class Agent extends Model
                     'currency_id' => $pair->currency_id,
                     'currency' => $pair->currency?->code,
                     'net' => $net,
-                    'classification' => $net > 0 ? 'debtor' : ($net < 0 ? 'creditor' : 'settled'),
+                    'classification' => $net < 0 ? 'debtor' : ($net > 0 ? 'creditor' : 'settled'),
                 ];
             })->values();
         });

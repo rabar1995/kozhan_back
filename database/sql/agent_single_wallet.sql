@@ -1,5 +1,7 @@
 -- Single net-position agent wallet.
--- 1) Seeds the agent_wallet account type (asset, debit-normal).
+-- 1) Seeds the agent_wallet account type (liability, credit-normal).
+--    Positive balance = office owes the agent (creditor).
+--    Negative balance = agent owes the office (debtor).
 -- 2) Rewrites fn_update_agent_balance: agents.net_balance becomes the
 --    signed current_balance of the agent's own accounts (sum across all
 --    its accounts, sign per account type normal_balance), instead of
@@ -10,7 +12,7 @@
 -- Idempotent: safe to run repeatedly.
 
 INSERT INTO account_types (id, code, name, category, normal_balance, is_system)
-VALUES (gen_random_uuid(), 'agent_wallet', 'Agent Wallet', 'asset', 'debit', true)
+VALUES (gen_random_uuid(), 'agent_wallet', 'Agent Wallet', 'liability', 'credit', true)
 ON CONFLICT (code) DO NOTHING;
 
 -- Single-wallet model: legacy pair columns become optional.

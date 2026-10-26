@@ -17,8 +17,9 @@ class AgentService
     /**
      * Create an agent together with a single net-position wallet per
      * currency (type agent_wallet), office_shared, inside a transaction.
-     * Positive balance = agent owes the office (debtor), negative =
-     * office owes the agent (creditor).
+     * The agent_wallet is a liability (credit-normal), so:
+     *   positive balance = office owes the agent (creditor),
+     *   negative balance = agent owes the office (debtor).
      *
      * @param  array  $data  {name, phone?, country?, city?, balance_currency_id}
      * @param  User  $user  Acting user
